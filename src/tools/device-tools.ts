@@ -4,6 +4,7 @@ import { DeviceDiscovery } from "../device-discovery.js";
 import { WebKitConnection } from "../webkit-connection.js";
 import type { ProxyConfig } from "../types.js";
 import { ProxyManager } from "../proxy-manager.js";
+import { connectToPage, errorResult, textResult } from "./shared.js";
 
 export interface BridgeState {
   discovery: DeviceDiscovery;
@@ -11,14 +12,6 @@ export interface BridgeState {
   proxyManager: ProxyManager;
   config: ProxyConfig;
   connectedPageId: string | null;
-}
-
-function textResult(data: any) {
-  return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
-}
-
-function errorResult(message: string) {
-  return { content: [{ type: "text" as const, text: JSON.stringify({ error: message }) }], isError: true as const };
 }
 
 export function registerDeviceTools(server: McpServer, state: BridgeState): void {
@@ -56,32 +49,7 @@ export function registerDeviceTools(server: McpServer, state: BridgeState): void
         return errorResult(`Page ${page_id} not found. Use list_inspectable_pages to see available pages.`);
       }
 
-      if (state.connection) {
-        await state.connection.disconnect();
-      }
-
-      const conn = new WebKitConnection();
-      await conn.connect(page.websocket_url);
-
-      // Set connection immediately so it's usable even if domain enables fail
-      state.connection = conn;
-      state.connectedPageId = page_id;
-
-      const warnings: string[] = [];
-      if (state.config.networkCapture) {
-        try {
-          await conn.enableNetworkCapture();
-        } catch (e: any) {
-          warnings.push(`Network capture unavailable: ${e.message}`);
-        }
-      }
-      if (state.config.consoleCapture) {
-        try {
-          await conn.enableConsoleCapture();
-        } catch (e: any) {
-          warnings.push(`Console capture unavailable: ${e.message}`);
-        }
-      }
+      const { warnings } = await connectToPage(state, page);
 
       return textResult({
         connected: true,

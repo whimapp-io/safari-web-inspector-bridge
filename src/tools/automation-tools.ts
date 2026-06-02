@@ -1,21 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { BridgeState } from "./device-tools.js";
-
-function textResult(data: any) {
-  return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
-}
-
-function errorResult(message: string) {
-  return { content: [{ type: "text" as const, text: JSON.stringify({ error: message }) }], isError: true as const };
-}
-
-function requireConnection(state: BridgeState) {
-  if (!state.connection || !state.connection.isConnected) {
-    throw new Error("Not connected to a page. Use the connect tool first.");
-  }
-  return state.connection;
-}
+import { ensureConnection, errorResult, textResult } from "./shared.js";
 
 export function registerAutomationTools(server: McpServer, state: BridgeState): void {
   server.tool(
@@ -24,7 +10,7 @@ export function registerAutomationTools(server: McpServer, state: BridgeState): 
     { url: z.string().describe("The URL to navigate to") },
     async ({ url }) => {
       try {
-        const conn = requireConnection(state);
+        const conn = await ensureConnection(state);
 
         await conn.send("Runtime.evaluate", {
           expression: `window.location.href = ${JSON.stringify(url)}`,
@@ -44,8 +30,8 @@ export function registerAutomationTools(server: McpServer, state: BridgeState): 
         });
 
         return textResult({
-          url: urlResult.result?.value || urlResult.value,
-          title: titleResult.result?.value || titleResult.value,
+          url: urlResult.result?.value ?? urlResult.value,
+          title: titleResult.result?.value ?? titleResult.value,
           status: "navigated",
         });
       } catch (e: any) {
@@ -63,7 +49,7 @@ export function registerAutomationTools(server: McpServer, state: BridgeState): 
     },
     async ({ expression, await_promise }) => {
       try {
-        const conn = requireConnection(state);
+        const conn = await ensureConnection(state);
         const result = await conn.send("Runtime.evaluate", {
           expression,
           returnByValue: true,
@@ -86,6 +72,56 @@ export function registerAutomationTools(server: McpServer, state: BridgeState): 
   );
 
   server.tool(
+    "patch_css",
+    "Inject or replace a <style> element for live CSS tweaking — idempotent per id, so " +
+      "re-patching the same id replaces the previous rules (ideal for iterating on a fix). " +
+      "Pass an empty css string to remove the patch. Survives until the page reloads.",
+    {
+      css: z.string().describe("CSS text to inject. Empty string removes the patch."),
+      id: z
+        .string()
+        .optional()
+        .default("swib-css-patch")
+        .describe("Style element id; re-patching the same id replaces it"),
+    },
+    async ({ css, id }) => {
+      try {
+        const conn = await ensureConnection(state);
+        const expression = `
+          (() => {
+            const id = ${JSON.stringify(id)};
+            const css = ${JSON.stringify(css)};
+            let el = document.getElementById(id);
+            if (!css) {
+              if (el) el.remove();
+              return { id, removed: true };
+            }
+            if (!el || el.tagName !== 'STYLE') {
+              el = document.createElement('style');
+              el.id = id;
+              document.head.appendChild(el);
+            }
+            el.textContent = css;
+            return { id, applied: true, bytes: css.length };
+          })()
+        `;
+
+        const result = await conn.send("Runtime.evaluate", {
+          expression,
+          returnByValue: true,
+        });
+
+        if (result.exceptionDetails || result.wasThrown) {
+          return errorResult(result.exceptionDetails?.text || "patch_css evaluation error");
+        }
+        return textResult(result.result?.value ?? result.value);
+      } catch (e: any) {
+        return errorResult(e.message);
+      }
+    }
+  );
+
+  server.tool(
     "click_element",
     "Click a DOM element identified by CSS selector",
     {
@@ -94,7 +130,7 @@ export function registerAutomationTools(server: McpServer, state: BridgeState): 
     },
     async ({ selector, index }) => {
       try {
-        const conn = requireConnection(state);
+        const conn = await ensureConnection(state);
         const expression = `
           (() => {
             const els = document.querySelectorAll(${JSON.stringify(selector)});
@@ -111,7 +147,7 @@ export function registerAutomationTools(server: McpServer, state: BridgeState): 
           returnByValue: true,
         });
 
-        const value = result.result?.value || result.value;
+        const value = result.result?.value ?? result.value;
         if (value?.error) {
           return errorResult(value.error);
         }
@@ -131,7 +167,7 @@ export function registerAutomationTools(server: McpServer, state: BridgeState): 
     },
     async ({ text, selector }) => {
       try {
-        const conn = requireConnection(state);
+        const conn = await ensureConnection(state);
 
         const selectorJson = JSON.stringify(selector || "");
         const textJson = JSON.stringify(text);
@@ -152,6 +188,7 @@ export function registerAutomationTools(server: McpServer, state: BridgeState): 
             })()`
           : `(() => {
               const el = document.activeElement;
+              if (!el || el === document.body) return { error: 'No focused element; pass a selector' };
               if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
                 el.value += ${textJson};
                 el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -167,7 +204,7 @@ export function registerAutomationTools(server: McpServer, state: BridgeState): 
           returnByValue: true,
         });
 
-        const value = result.result?.value || result.value;
+        const value = result.result?.value ?? result.value;
         if (value?.error) {
           return errorResult(value.error);
         }
@@ -189,7 +226,7 @@ export function registerAutomationTools(server: McpServer, state: BridgeState): 
     },
     async ({ selector, url_contains, network_idle, timeout_ms }) => {
       try {
-        const conn = requireConnection(state);
+        const conn = await ensureConnection(state);
         const startTime = Date.now();
 
         if (selector) {
@@ -222,18 +259,26 @@ export function registerAutomationTools(server: McpServer, state: BridgeState): 
           if (result.exceptionDetails || result.wasThrown) {
             return errorResult(`Timeout waiting for selector: ${selector}`);
           }
-          return textResult(result.result?.value || result.value);
+          return textResult(result.result?.value ?? result.value);
         }
 
         if (url_contains) {
           while (Date.now() - startTime < timeout_ms) {
-            const result = await conn.send("Runtime.evaluate", {
-              expression: "window.location.href",
-              returnByValue: true,
-            });
-            const currentUrl = result.result?.value || result.value || "";
-            if (currentUrl.includes(url_contains)) {
-              return textResult({ matched: true, elapsed_ms: Date.now() - startTime });
+            try {
+              // Re-acquire each poll: the inspector socket commonly drops *during* the
+              // very navigation we're waiting for, so reconnect transparently instead
+              // of failing the wait.
+              const live = await ensureConnection(state);
+              const result = await live.send("Runtime.evaluate", {
+                expression: "window.location.href",
+                returnByValue: true,
+              });
+              const currentUrl = (result.result?.value ?? result.value) || "";
+              if (currentUrl.includes(url_contains)) {
+                return textResult({ matched: true, elapsed_ms: Date.now() - startTime });
+              }
+            } catch {
+              // Connection is mid-navigation; retry on the next tick.
             }
             await new Promise((r) => setTimeout(r, 200));
           }

@@ -1,21 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { BridgeState } from "./device-tools.js";
-
-function textResult(data: any) {
-  return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
-}
-
-function errorResult(message: string) {
-  return { content: [{ type: "text" as const, text: JSON.stringify({ error: message }) }], isError: true as const };
-}
-
-function requireConnection(state: BridgeState) {
-  if (!state.connection || !state.connection.isConnected) {
-    throw new Error("Not connected to a page. Use the connect tool first.");
-  }
-  return state.connection;
-}
+import { ensureConnection, errorResult, textResult } from "./shared.js";
 
 export function registerObservationTools(server: McpServer, state: BridgeState): void {
   server.tool(
@@ -24,12 +10,12 @@ export function registerObservationTools(server: McpServer, state: BridgeState):
     {},
     async () => {
       try {
-        const conn = requireConnection(state);
+        const conn = await ensureConnection(state);
         const result = await conn.send("Runtime.evaluate", {
           expression: "window.location.href",
           returnByValue: true,
         });
-        return textResult({ url: result.result?.value || result.value });
+        return textResult({ url: result.result?.value ?? result.value });
       } catch (e: any) {
         return errorResult(e.message);
       }
@@ -45,7 +31,7 @@ export function registerObservationTools(server: McpServer, state: BridgeState):
     },
     async ({ selector, outer_html }) => {
       try {
-        const conn = requireConnection(state);
+        const conn = await ensureConnection(state);
         const prop = outer_html ? "outerHTML" : "textContent";
 
         const expression = selector
@@ -79,7 +65,7 @@ export function registerObservationTools(server: McpServer, state: BridgeState):
     },
     async ({ clear, filter_url, filter_status }) => {
       try {
-        const conn = requireConnection(state);
+        const conn = await ensureConnection(state);
         const entries = (filter_url || filter_status)
           ? conn.networkBuffer.getFiltered({ filterUrl: filter_url, filterStatus: filter_status })
           : conn.networkBuffer.getAll();
@@ -104,7 +90,7 @@ export function registerObservationTools(server: McpServer, state: BridgeState):
     },
     async ({ clear, level }) => {
       try {
-        const conn = requireConnection(state);
+        const conn = await ensureConnection(state);
         let entries = conn.consoleLog;
 
         if (level) {
@@ -130,13 +116,13 @@ export function registerObservationTools(server: McpServer, state: BridgeState):
     {},
     async () => {
       try {
-        const conn = requireConnection(state);
+        const conn = await ensureConnection(state);
 
         const dimResult = await conn.send("Runtime.evaluate", {
           expression: "JSON.stringify({ width: window.innerWidth, height: window.innerHeight })",
           returnByValue: true,
         });
-        const dims = JSON.parse(dimResult.result?.value || dimResult.value || '{"width":375,"height":812}');
+        const dims = JSON.parse((dimResult.result?.value ?? dimResult.value) || '{"width":375,"height":812}');
 
         const result = await conn.send("Page.snapshotRect", {
           x: 0,
@@ -169,7 +155,7 @@ export function registerObservationTools(server: McpServer, state: BridgeState):
     },
     async ({ clear }) => {
       try {
-        const conn = requireConnection(state);
+        const conn = await ensureConnection(state);
         const log = [...conn.debugLog];
         if (clear) {
           conn.debugLog.length = 0;
