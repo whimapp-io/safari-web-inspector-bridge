@@ -118,8 +118,18 @@ export function registerObservationTools(server: McpServer, state: BridgeState):
       try {
         const conn = await ensureConnection(state);
 
+        // Size the capture from visualViewport / documentElement.client*, NOT
+        // window.inner*: in an iOS standalone PWA window.inner* is the small dynamic
+        // viewport, and the Android installed WebAPK reports window.inner* at ~1.9x the
+        // true CSS viewport — both of which mis-size the snapshot rect. visualViewport
+        // is the correct visible area on both; clientWidth/Height is the reliable
+        // fallback; window.inner* is a last resort.
+        const dimExpr = `JSON.stringify({
+          width: Math.round((window.visualViewport && window.visualViewport.width) || document.documentElement.clientWidth || window.innerWidth),
+          height: Math.round((window.visualViewport && window.visualViewport.height) || document.documentElement.clientHeight || window.innerHeight)
+        })`;
         const dimResult = await conn.send("Runtime.evaluate", {
-          expression: "JSON.stringify({ width: window.innerWidth, height: window.innerHeight })",
+          expression: dimExpr,
           returnByValue: true,
         });
         const dims = JSON.parse((dimResult.result?.value ?? dimResult.value) || '{"width":375,"height":812}');
