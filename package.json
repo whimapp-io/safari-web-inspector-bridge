@@ -6,6 +6,9 @@
   "bin": {
     "safari-web-inspector-bridge": "./dist/index.js"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "prepare": "npm run build",
