@@ -59,29 +59,25 @@ stateDiagram-v2
 
 ## Installation
 
-```bash
-git clone https://github.com/andesco/safari-web-inspector-bridge.git
-cd safari-web-inspector-bridge
-npm install
-npm run build
-```
+Requires Node.js 18+. No install step needed — `npx` builds and caches the server
+on first run (the `prepare` script compiles TypeScript).
 
 ### Add to Claude Code
 
 ```bash
-claude mcp add safari-web-inspector-bridge node /path/to/safari-web-inspector-bridge/dist/index.js
+claude mcp add safari-web-inspector-bridge -- npx -y github:whimapp-io/safari-web-inspector-bridge
 ```
 
 ### Add to any MCP client
 
-Add to your MCP configuration file:
+Add to your MCP configuration file (e.g. a project's `.mcp.json`):
 
 ```json
 {
   "mcpServers": {
     "safari-web-inspector-bridge": {
-      "command": "node",
-      "args": ["/path/to/safari-web-inspector-bridge/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "github:whimapp-io/safari-web-inspector-bridge"],
       "env": {
         "SWIB_NETWORK_CAPTURE": "true",
         "SWIB_CONSOLE_CAPTURE": "true"
@@ -89,6 +85,16 @@ Add to your MCP configuration file:
     }
   }
 }
+```
+
+### From a local checkout (development)
+
+```bash
+git clone https://github.com/whimapp-io/safari-web-inspector-bridge.git
+cd safari-web-inspector-bridge
+npm install
+npm run build
+claude mcp add safari-web-inspector-bridge node /path/to/safari-web-inspector-bridge/dist/index.js
 ```
 
 ## Tools

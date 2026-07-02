@@ -8,10 +8,18 @@
   },
   "scripts": {
     "build": "tsc",
+    "prepare": "npm run build",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/whimapp-io/safari-web-inspector-bridge.git"
   },
   "keywords": [
     "mcp",
