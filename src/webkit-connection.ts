@@ -18,6 +18,16 @@ export class WebKitConnection extends EventEmitter {
   public consoleLog: ConsoleEntry[] = [];
   private maxConsoleEntries = 1000;
   public debugLog: string[] = [];
+  private maxDebugEntries = 2000;
+
+  // Every frame in and out lands here; without a cap a long device session
+  // grows the array without bound (network/console buffers are already capped).
+  private pushDebugLog(entry: string): void {
+    if (this.debugLog.length >= this.maxDebugEntries) {
+      this.debugLog.shift();
+    }
+    this.debugLog.push(entry);
+  }
 
   // Target-based multiplexing (iOS 26+)
   private targetId: string | null = null;
@@ -42,9 +52,14 @@ export class WebKitConnection extends EventEmitter {
 
       this.ws.on("message", (data) => {
         const raw = data.toString();
-        this.debugLog.push(`<< ${raw.slice(0, 500)}`);
-        const msg = JSON.parse(raw);
-        this.handleMessage(msg);
+        this.pushDebugLog(`<< ${raw.slice(0, 500)}`);
+        // A malformed frame must not throw here: an uncaught exception in the
+        // 'message' handler takes down the whole MCP server process.
+        try {
+          this.handleMessage(JSON.parse(raw));
+        } catch (err: any) {
+          this.pushDebugLog(`[message error] ${err.message}`);
+        }
       });
 
       this.ws.on("close", () => {
@@ -63,7 +78,7 @@ export class WebKitConnection extends EventEmitter {
       const innerRaw = msg.params?.message;
       if (innerRaw) {
         const inner = typeof innerRaw === "string" ? JSON.parse(innerRaw) : innerRaw;
-        this.debugLog.push(`<< [target] ${JSON.stringify(inner).slice(0, 500)}`);
+        this.pushDebugLog(`<< [target] ${JSON.stringify(inner).slice(0, 500)}`);
         this.handleMessage(inner);
       }
       return;
@@ -74,7 +89,7 @@ export class WebKitConnection extends EventEmitter {
       const info = msg.params?.targetInfo;
       if (info?.targetId && info?.type === "page") {
         this.targetId = info.targetId;
-        this.debugLog.push(`[target discovered] ${this.targetId}`);
+        this.pushDebugLog(`[target discovered] ${this.targetId}`);
       }
       return;
     }
@@ -104,18 +119,18 @@ export class WebKitConnection extends EventEmitter {
     try {
       await this.sendDirect("Runtime.enable");
       this.useTargetMultiplexing = false;
-      this.debugLog.push("[mode] direct (no target multiplexing)");
+      this.pushDebugLog("[mode] direct (no target multiplexing)");
       return;
     } catch {
       // Direct failed — try target-based approach (iOS 26+)
     }
 
-    this.debugLog.push("[mode] attempting target multiplexing");
+    this.pushDebugLog("[mode] attempting target multiplexing");
 
     // If we already got a targetId from Target.targetCreated events, use it
     if (this.targetId) {
       this.useTargetMultiplexing = true;
-      this.debugLog.push(`[mode] target multiplexing with ${this.targetId}`);
+      this.pushDebugLog(`[mode] target multiplexing with ${this.targetId}`);
       return;
     }
 
@@ -127,7 +142,7 @@ export class WebKitConnection extends EventEmitter {
       if (pageTarget?.targetId) {
         this.targetId = pageTarget.targetId;
         this.useTargetMultiplexing = true;
-        this.debugLog.push(`[mode] target multiplexing with ${this.targetId} (from getTargets)`);
+        this.pushDebugLog(`[mode] target multiplexing with ${this.targetId} (from getTargets)`);
         return;
       }
     } catch {
@@ -138,11 +153,11 @@ export class WebKitConnection extends EventEmitter {
     await new Promise((r) => setTimeout(r, 1000));
     if (this.targetId) {
       this.useTargetMultiplexing = true;
-      this.debugLog.push(`[mode] target multiplexing with ${this.targetId} (from events)`);
+      this.pushDebugLog(`[mode] target multiplexing with ${this.targetId} (from events)`);
       return;
     }
 
-    this.debugLog.push("[mode] no target found, using direct (may fail on iOS 26+)");
+    this.pushDebugLog("[mode] no target found, using direct (may fail on iOS 26+)");
   }
 
   // Send directly on the WebSocket (no target wrapping)
@@ -165,7 +180,7 @@ export class WebKitConnection extends EventEmitter {
         reject: (e) => { clearTimeout(timeout); reject(e); },
       });
 
-      this.debugLog.push(`>> ${msg}`);
+      this.pushDebugLog(`>> ${msg}`);
       this.ws!.send(msg);
     });
   }
@@ -230,7 +245,7 @@ export class WebKitConnection extends EventEmitter {
         },
       });
 
-      this.debugLog.push(`>> [target] ${innerMessage}`);
+      this.pushDebugLog(`>> [target] ${innerMessage}`);
       this.ws!.send(outerMsg);
     });
   }
